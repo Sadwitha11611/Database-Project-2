@@ -1,5 +1,5 @@
 """
-gui.py — Milestone 3 GUI for CS-4347 Airport Management System
+gui.py — Milestone 2 GUI for CS-4347 Airport Management System
 Run:
   python gui.py
 """
