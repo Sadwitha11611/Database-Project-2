@@ -21,12 +21,14 @@ def _conn():
 # 1. FLIGHT SEARCH BY NUMBER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def flight(flight_number: str):
+def flight(flight_number: str, flight_date: str = None):
     """
     Given a flight number, return the full details of that flight including
     all legs, departure/arrival airports, scheduled times, and available fares.
+    If flight_date is supplied, return that flight's dated leg instances.
 
     Usage: flight("AA3478")
+    Usage: flight("AA3478", "2025-10-04")
     """
     conn = _conn()
     cursor = conn.cursor(dictionary=True)
@@ -43,25 +45,49 @@ def flight(flight_number: str):
         close_connection(conn, cursor)
         return None, None, None
 
-    # Flight legs
-    cursor.execute("""
-        SELECT
-            fl.Leg_no,
-            fl.Number,
-            dep.Airport_code AS Dep_code,
-            dep.City         AS Dep_city,
-            dep.Name         AS Dep_name,
-            arr.Airport_code AS Arr_code,
-            arr.City         AS Arr_city,
-            arr.Name         AS Arr_name,
-            fl.Scheduled_dep_time,
-            fl.Scheduled_arr_time
-        FROM FLIGHT_LEG fl
-        JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
-        JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
-        WHERE fl.Number = %s
-        ORDER BY fl.Leg_no
-    """, (flight_number,))
+    if flight_date:
+        cursor.execute("""
+            SELECT
+                fl.Leg_no,
+                fl.Number,
+                li.Date,
+                li.Airplane_id,
+                li.No_of_avail_seats,
+                dep.Airport_code AS Dep_code,
+                dep.City         AS Dep_city,
+                dep.Name         AS Dep_name,
+                arr.Airport_code AS Arr_code,
+                arr.City         AS Arr_city,
+                arr.Name         AS Arr_name,
+                COALESCE(li.Dep_time, fl.Scheduled_dep_time) AS Departure_time,
+                COALESCE(li.Arr_time, fl.Scheduled_arr_time) AS Arrival_time
+            FROM FLIGHT_LEG fl
+            JOIN LEG_INSTANCE li
+                ON li.Number = fl.Number AND li.Leg_no = fl.Leg_no
+            JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
+            JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
+            WHERE fl.Number = %s AND li.Date = %s
+            ORDER BY fl.Leg_no
+        """, (flight_number, flight_date))
+    else:
+        cursor.execute("""
+            SELECT
+                fl.Leg_no,
+                fl.Number,
+                dep.Airport_code AS Dep_code,
+                dep.City         AS Dep_city,
+                dep.Name         AS Dep_name,
+                arr.Airport_code AS Arr_code,
+                arr.City         AS Arr_city,
+                arr.Name         AS Arr_name,
+                fl.Scheduled_dep_time,
+                fl.Scheduled_arr_time
+            FROM FLIGHT_LEG fl
+            JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
+            JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
+            WHERE fl.Number = %s
+            ORDER BY fl.Leg_no
+        """, (flight_number,))
     legs = cursor.fetchall()
 
     # Fares
@@ -81,15 +107,17 @@ def flight(flight_number: str):
 # 2. TRIP / TRAVEL ITINERARY SEARCH
 # ─────────────────────────────────────────────────────────────────────────────
 
-def trip(src: str, dst: str):
+def trip(src: str, dst: str, flight_date: str = None):
     """
     Find all travel itineraries between src and dst airports.
     Supports:
       - Lookup by 3-letter airport code (e.g. "DFW") or city name (e.g. "Dallas")
       - Direct flights (single leg)
       - One-stop connecting flights (two legs)
+      - Optional date filtering against LEG_INSTANCE rows
 
     Usage: trip("DFW", "SFO")  or  trip("Dallas", "San Francisco")
+    Usage: trip("DFW", "SFO", "2025-10-04")
     """
     conn = _conn()
     cursor = conn.cursor(dictionary=True)
@@ -129,66 +157,140 @@ def trip(src: str, dst: str):
     src_placeholder = ','.join(['%s'] * len(src_codes))
     dst_placeholder = ','.join(['%s'] * len(dst_codes))
 
-    # ── Direct flights ────────────────────────────────────────────────────────
-    cursor.execute(f"""
-        SELECT
-            f.Number AS flight_number,
-            f.Airline,
-            f.Weekdays,
-            fl.Leg_no,
-            dep.Airport_code AS dep_code,
-            dep.City         AS dep_city,
-            arr.Airport_code AS arr_code,
-            arr.City         AS arr_city,
-            fl.Scheduled_dep_time,
-            fl.Scheduled_arr_time,
-            'DIRECT' AS type
-        FROM FLIGHT_LEG fl
-        JOIN FLIGHT f   ON fl.Number = f.Number
-        JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
-        JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
-        WHERE fl.Dep_airport_code IN ({src_placeholder})
-          AND fl.Arr_airport_code IN ({dst_placeholder})
-        ORDER BY fl.Scheduled_dep_time
-    """, src_codes + dst_codes)
+    if flight_date:
+        # ── Direct dated flight instances ─────────────────────────────────────
+        cursor.execute(f"""
+            SELECT
+                f.Airline,
+                f.Number AS flight_number,
+                li.Date,
+                fl.Leg_no,
+                dep.Airport_code AS dep_code,
+                dep.City         AS dep_city,
+                arr.Airport_code AS arr_code,
+                arr.City         AS arr_city,
+                COALESCE(li.Dep_time, fl.Scheduled_dep_time) AS departure_time,
+                COALESCE(li.Arr_time, fl.Scheduled_arr_time) AS arrival_time,
+                'DIRECT' AS type
+            FROM FLIGHT_LEG fl
+            JOIN LEG_INSTANCE li
+                ON li.Number = fl.Number AND li.Leg_no = fl.Leg_no
+            JOIN FLIGHT f   ON fl.Number = f.Number
+            JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
+            JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
+            WHERE fl.Dep_airport_code IN ({src_placeholder})
+              AND fl.Arr_airport_code IN ({dst_placeholder})
+              AND li.Date = %s
+            ORDER BY departure_time
+        """, src_codes + dst_codes + [flight_date])
+    else:
+        # ── Direct scheduled flights ──────────────────────────────────────────
+        cursor.execute(f"""
+            SELECT
+                f.Number AS flight_number,
+                f.Airline,
+                f.Weekdays,
+                fl.Leg_no,
+                dep.Airport_code AS dep_code,
+                dep.City         AS dep_city,
+                arr.Airport_code AS arr_code,
+                arr.City         AS arr_city,
+                fl.Scheduled_dep_time,
+                fl.Scheduled_arr_time,
+                'DIRECT' AS type
+            FROM FLIGHT_LEG fl
+            JOIN FLIGHT f   ON fl.Number = f.Number
+            JOIN AIRPORT dep ON fl.Dep_airport_code = dep.Airport_code
+            JOIN AIRPORT arr ON fl.Arr_airport_code = arr.Airport_code
+            WHERE fl.Dep_airport_code IN ({src_placeholder})
+              AND fl.Arr_airport_code IN ({dst_placeholder})
+            ORDER BY fl.Scheduled_dep_time
+        """, src_codes + dst_codes)
     direct_flights = cursor.fetchall()
 
-    # ── Connecting flights (two legs, one stop) ───────────────────────────────
-    cursor.execute(f"""
-        SELECT
-            leg1.Number    AS flight1_number,
-            f1.Airline     AS airline1,
-            dep1.Airport_code AS dep1_code,
-            dep1.City         AS dep1_city,
-            con.Airport_code  AS con_code,
-            con.City          AS con_city,
-            leg1.Scheduled_dep_time AS dep1_time,
-            leg1.Scheduled_arr_time AS arr1_time,
+    if flight_date:
+        # ── Dated connecting flights: same date and at least one hour layover ─
+        cursor.execute(f"""
+            SELECT
+                li1.Date,
+                leg1.Number    AS flight1_number,
+                f1.Airline     AS airline1,
+                dep1.Airport_code AS dep1_code,
+                dep1.City         AS dep1_city,
+                con.Airport_code  AS con_code,
+                con.City          AS con_city,
+                COALESCE(li1.Dep_time, leg1.Scheduled_dep_time) AS dep1_time,
+                COALESCE(li1.Arr_time, leg1.Scheduled_arr_time) AS arr1_time,
 
-            leg2.Number    AS flight2_number,
-            f2.Airline     AS airline2,
-            arr2.Airport_code AS arr2_code,
-            arr2.City         AS arr2_city,
-            leg2.Scheduled_dep_time AS dep2_time,
-            leg2.Scheduled_arr_time AS arr2_time,
+                leg2.Number    AS flight2_number,
+                f2.Airline     AS airline2,
+                arr2.Airport_code AS arr2_code,
+                arr2.City         AS arr2_city,
+                COALESCE(li2.Dep_time, leg2.Scheduled_dep_time) AS dep2_time,
+                COALESCE(li2.Arr_time, leg2.Scheduled_arr_time) AS arr2_time,
 
-            'CONNECTING' AS type
-        FROM FLIGHT_LEG leg1
-        JOIN FLIGHT_LEG leg2
-            ON  leg1.Arr_airport_code = leg2.Dep_airport_code
-            AND NOT (leg1.Number = leg2.Number AND leg1.Leg_no = leg2.Leg_no)
-        JOIN FLIGHT  f1  ON leg1.Number = f1.Number
-        JOIN FLIGHT  f2  ON leg2.Number = f2.Number
-        JOIN AIRPORT dep1 ON leg1.Dep_airport_code = dep1.Airport_code
-        JOIN AIRPORT con  ON leg1.Arr_airport_code = con.Airport_code
-        JOIN AIRPORT arr2 ON leg2.Arr_airport_code = arr2.Airport_code
-        WHERE leg1.Dep_airport_code IN ({src_placeholder})
-          AND leg2.Arr_airport_code IN ({dst_placeholder})
-          AND leg1.Arr_airport_code NOT IN ({src_placeholder})
-          AND leg1.Arr_airport_code NOT IN ({dst_placeholder})
-          AND leg2.Scheduled_dep_time > leg1.Scheduled_arr_time
-        ORDER BY leg1.Scheduled_dep_time, leg2.Scheduled_dep_time
-    """, src_codes + dst_codes + src_codes + dst_codes)
+                'CONNECTING' AS type
+            FROM FLIGHT_LEG leg1
+            JOIN LEG_INSTANCE li1
+                ON li1.Number = leg1.Number AND li1.Leg_no = leg1.Leg_no
+            JOIN FLIGHT_LEG leg2
+                ON leg1.Arr_airport_code = leg2.Dep_airport_code
+                AND NOT (leg1.Number = leg2.Number AND leg1.Leg_no = leg2.Leg_no)
+            JOIN LEG_INSTANCE li2
+                ON li2.Number = leg2.Number AND li2.Leg_no = leg2.Leg_no
+                AND li2.Date = li1.Date
+            JOIN FLIGHT  f1  ON leg1.Number = f1.Number
+            JOIN FLIGHT  f2  ON leg2.Number = f2.Number
+            JOIN AIRPORT dep1 ON leg1.Dep_airport_code = dep1.Airport_code
+            JOIN AIRPORT con  ON leg1.Arr_airport_code = con.Airport_code
+            JOIN AIRPORT arr2 ON leg2.Arr_airport_code = arr2.Airport_code
+            WHERE leg1.Dep_airport_code IN ({src_placeholder})
+              AND leg2.Arr_airport_code IN ({dst_placeholder})
+              AND leg1.Arr_airport_code NOT IN ({src_placeholder})
+              AND leg1.Arr_airport_code NOT IN ({dst_placeholder})
+              AND li1.Date = %s
+              AND TIMESTAMP(li2.Date, COALESCE(li2.Dep_time, leg2.Scheduled_dep_time))
+                  >= TIMESTAMP(li1.Date, COALESCE(li1.Arr_time, leg1.Scheduled_arr_time))
+                     + INTERVAL 1 HOUR
+            ORDER BY dep1_time, dep2_time
+        """, src_codes + dst_codes + src_codes + dst_codes + [flight_date])
+    else:
+        # ── Connecting scheduled flights (two legs, one stop) ─────────────────
+        cursor.execute(f"""
+            SELECT
+                leg1.Number    AS flight1_number,
+                f1.Airline     AS airline1,
+                dep1.Airport_code AS dep1_code,
+                dep1.City         AS dep1_city,
+                con.Airport_code  AS con_code,
+                con.City          AS con_city,
+                leg1.Scheduled_dep_time AS dep1_time,
+                leg1.Scheduled_arr_time AS arr1_time,
+
+                leg2.Number    AS flight2_number,
+                f2.Airline     AS airline2,
+                arr2.Airport_code AS arr2_code,
+                arr2.City         AS arr2_city,
+                leg2.Scheduled_dep_time AS dep2_time,
+                leg2.Scheduled_arr_time AS arr2_time,
+
+                'CONNECTING' AS type
+            FROM FLIGHT_LEG leg1
+            JOIN FLIGHT_LEG leg2
+                ON  leg1.Arr_airport_code = leg2.Dep_airport_code
+                AND NOT (leg1.Number = leg2.Number AND leg1.Leg_no = leg2.Leg_no)
+            JOIN FLIGHT  f1  ON leg1.Number = f1.Number
+            JOIN FLIGHT  f2  ON leg2.Number = f2.Number
+            JOIN AIRPORT dep1 ON leg1.Dep_airport_code = dep1.Airport_code
+            JOIN AIRPORT con  ON leg1.Arr_airport_code = con.Airport_code
+            JOIN AIRPORT arr2 ON leg2.Arr_airport_code = arr2.Airport_code
+            WHERE leg1.Dep_airport_code IN ({src_placeholder})
+              AND leg2.Arr_airport_code IN ({dst_placeholder})
+              AND leg1.Arr_airport_code NOT IN ({src_placeholder})
+              AND leg1.Arr_airport_code NOT IN ({dst_placeholder})
+              AND leg2.Scheduled_dep_time >= ADDTIME(leg1.Scheduled_arr_time, '01:00:00')
+            ORDER BY leg1.Scheduled_dep_time, leg2.Scheduled_dep_time
+        """, src_codes + dst_codes + src_codes + dst_codes)
     connecting_flights = cursor.fetchall()
 
     close_connection(conn, cursor)

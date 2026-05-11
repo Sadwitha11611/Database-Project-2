@@ -226,7 +226,7 @@ class FlightTab(BaseTab):
                  font=FONT_TITLE).pack(side="left")
 
         tk.Label(self,
-                 text="Retrieve full details for a flight number — legs, schedule & fares.",
+                 text="Retrieve details for a flight number and date — legs, instance times & fares.",
                  bg=BG, fg=MUTED, font=FONT_SMALL).pack(anchor="w", padx=26, pady=(0, 16))
 
         # Input row
@@ -237,6 +237,11 @@ class FlightTab(BaseTab):
         fn_frame.pack(side="left", padx=(0, 12))
         self.fn_entry.insert(0, "1000")
         self.fn_entry.bind("<Return>", lambda e: self._search())
+
+        dt_frame, self.date_entry = input_field(row, "DATE (YYYY-MM-DD)", width=16)
+        dt_frame.pack(side="left", padx=(0, 12))
+        self.date_entry.insert(0, "2025-10-04")
+        self.date_entry.bind("<Return>", lambda e: self._search())
 
         btn = styled_button(row, "Search Flight", self._search, width=16)
         btn.pack(side="left", padx=(0, 12), pady=(20, 0))
@@ -256,14 +261,18 @@ class FlightTab(BaseTab):
 
     def _search(self):
         fn = self.fn_entry.get().strip()
+        flight_date = self.date_entry.get().strip()
         if not fn:
             messagebox.showwarning("Input needed", "Please enter a flight number.")
             return
-        self.status.busy(f"Looking up flight {fn}…")
+        if not flight_date:
+            messagebox.showwarning("Input needed", "Please enter a date.")
+            return
+        self.status.busy(f"Looking up flight {fn} on {flight_date}…")
 
         def query():
             from queries import flight
-            return flight(fn)
+            return flight(fn, flight_date)
 
         def done(result, err):
             if err:
@@ -272,7 +281,7 @@ class FlightTab(BaseTab):
                 return
             flight_row, legs, fares = result
             if not flight_row:
-                self.status.err(f"No flight found: {fn}")
+                self.status.err(f"No flight found: {fn} on {flight_date}")
                 self.tbl_flight.load([])
                 self.tbl_legs.load([])
                 self.tbl_fares.load([])
@@ -301,7 +310,7 @@ class TripTab(BaseTab):
                  font=FONT_TITLE).pack(side="left")
 
         tk.Label(self,
-                 text="Find direct & one-stop itineraries. Use airport codes (DFW) or city names (Dallas).",
+                 text="Find dated direct & one-stop itineraries. Use airport codes (DFW) or city names (Dallas).",
                  bg=BG, fg=MUTED, font=FONT_SMALL).pack(anchor="w", padx=26, pady=(0, 16))
 
         row = tk.Frame(self, bg=BG)
@@ -315,6 +324,11 @@ class TripTab(BaseTab):
         dst_frame.pack(side="left", padx=(0, 12))
         self.dst_entry.insert(0, "SFO")
         self.dst_entry.bind("<Return>", lambda e: self._search())
+
+        dt_frame, self.date_entry = input_field(row, "DATE (YYYY-MM-DD)", width=16)
+        dt_frame.pack(side="left", padx=(0, 12))
+        self.date_entry.insert(0, "2025-10-04")
+        self.date_entry.bind("<Return>", lambda e: self._search())
 
         btn = styled_button(row, "Search Trip", self._search, width=14)
         btn.pack(side="left", padx=(0, 12), pady=(20, 0))
@@ -330,14 +344,15 @@ class TripTab(BaseTab):
     def _search(self):
         src = self.src_entry.get().strip()
         dst = self.dst_entry.get().strip()
-        if not src or not dst:
-            messagebox.showwarning("Input needed", "Please enter both origin and destination.")
+        flight_date = self.date_entry.get().strip()
+        if not src or not dst or not flight_date:
+            messagebox.showwarning("Input needed", "Please enter origin, destination, and date.")
             return
-        self.status.busy(f"Searching {src} → {dst}…")
+        self.status.busy(f"Searching {src} → {dst} on {flight_date}…")
 
         def query():
             from queries import trip
-            return trip(src, dst)
+            return trip(src, dst, flight_date)
 
         def done(result, err):
             if err:

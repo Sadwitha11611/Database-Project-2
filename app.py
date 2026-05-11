@@ -1,4 +1,4 @@
-"""Command-line interface for CS-4347 Airport Management Milestone 2."""
+"""Command-line interface for CS-4347 Airport Management milestones."""
 
 import argparse
 from decimal import Decimal
@@ -31,7 +31,7 @@ def _print_rows(rows, empty_message="No results found."):
 def _cmd_flight(args):
     from queries import flight
 
-    flight_row, legs, fares = flight(args.flight_number)
+    flight_row, legs, fares = flight(args.flight_number, args.date)
     if not flight_row:
         print(f"No flight found for {args.flight_number}.")
         return
@@ -47,7 +47,7 @@ def _cmd_flight(args):
 def _cmd_trip(args):
     from queries import trip
 
-    direct, connecting, error = trip(args.source, args.destination)
+    direct, connecting, error = trip(args.source, args.destination, args.date)
     if error:
         print(error)
         return
@@ -91,11 +91,13 @@ def build_parser():
 
     flight_parser = subparsers.add_parser("flight", help="Search by flight number")
     flight_parser.add_argument("flight_number", help='Example: "AA3478"')
+    flight_parser.add_argument("--date", help="Optional instance date, YYYY-MM-DD")
     flight_parser.set_defaults(func=_cmd_flight)
 
     trip_parser = subparsers.add_parser("trip", help="Find direct and one-stop itineraries")
     trip_parser.add_argument("source", help='Source city or airport code, e.g. "DFW"')
     trip_parser.add_argument("destination", help='Destination city or airport code, e.g. "SFO"')
+    trip_parser.add_argument("--date", help="Optional instance date, YYYY-MM-DD")
     trip_parser.set_defaults(func=_cmd_trip)
 
     utilization_parser = subparsers.add_parser(
