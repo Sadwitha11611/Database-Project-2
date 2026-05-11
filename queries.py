@@ -387,7 +387,73 @@ def seat_availability(flight_number: str, date: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. PASSENGER ITINERARY RETRIEVAL
+# 5. AVAILABLE SEATS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def available_seats(date: str, flight_number: str, leg_no: int, airplane_id: str):
+    """
+    Return all seats on the airplane assigned to this leg instance
+    that have not yet been reserved.
+
+    Usage: available_seats("2025-10-04", "1000", 1, "PLNEDAB43C9")
+    """
+    conn = _conn()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT s.Seat_no, s.Class
+        FROM SEAT s
+        WHERE s.Airplane_id = %s
+          AND s.Seat_no NOT IN (
+              SELECT r.Seat_no
+              FROM RESERVATION r
+              WHERE r.Date = %s AND r.Number = %s AND r.Leg_no = %s
+          )
+        ORDER BY s.Seat_no
+    """, (airplane_id, date, flight_number, leg_no))
+    rows = cursor.fetchall()
+
+    close_connection(conn, cursor)
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. BOOK A SEAT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def book_seat(date: str, flight_number: str, leg_no: int, airplane_id: str,
+              seat_no: str, customer_name: str, cphone: str):
+    """
+    Reserve a seat for a customer on a specific flight leg instance and
+    decrement No_of_avail_seats in LEG_INSTANCE.
+
+    Raises mysql.connector.errors.IntegrityError if the seat is already taken.
+
+    Usage: book_seat("2025-10-04", "1000", 1, "PLNEDAB43C9", "2A", "Jane Doe", "5551234567")
+    """
+    conn = _conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO RESERVATION (Date, Number, Leg_no, Airplane_id, Seat_no, Customer_name, Cphone)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (date, flight_number, leg_no, airplane_id, seat_no, customer_name, cphone))
+        cursor.execute("""
+            UPDATE LEG_INSTANCE
+            SET No_of_avail_seats = No_of_avail_seats - 1
+            WHERE Date = %s AND Number = %s AND Leg_no = %s
+        """, (date, flight_number, leg_no))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        close_connection(conn, cursor)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. PASSENGER ITINERARY RETRIEVAL
 # ─────────────────────────────────────────────────────────────────────────────
 
 def passenger_itinerary(customer_name: str):

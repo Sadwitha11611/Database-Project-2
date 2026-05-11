@@ -434,24 +434,26 @@ class UtilizationTab(BaseTab):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  TAB 4 — SEAT AVAILABILITY
+#  TAB 4 — SEAT AVAILABILITY & BOOKING
 # ─────────────────────────────────────────────────────────────────────────────
 
 class SeatTab(BaseTab):
     def __init__(self, parent, status_bar):
         super().__init__(parent, status_bar)
+        self._leg_rows = []
         self._build()
 
     def _build(self):
         hdr = tk.Frame(self, bg=BG)
         hdr.pack(fill="x", padx=24, pady=(20, 4))
-        tk.Label(hdr, text="💺  Seat Availability", bg=BG, fg=TEXT,
+        tk.Label(hdr, text="💺  Seat Availability & Booking", bg=BG, fg=TEXT,
                  font=FONT_TITLE).pack(side="left")
 
         tk.Label(self,
-                 text="Compare airplane capacity vs. confirmed reservations for a flight + date.",
+                 text="Check remaining capacity for a flight, then book an available seat.",
                  bg=BG, fg=MUTED, font=FONT_SMALL).pack(anchor="w", padx=26, pady=(0, 16))
 
+        # ── Availability check inputs ─────────────────────────────────────────
         row = tk.Frame(self, bg=BG)
         row.pack(fill="x", padx=24, pady=(0, 12))
 
@@ -467,13 +469,53 @@ class SeatTab(BaseTab):
         btn = styled_button(row, "Check Seats", self._check, width=14)
         btn.pack(side="left", padx=(0, 12), pady=(20, 0))
 
-        # Summary cards row
+        # Summary cards (populated after check)
         self.cards_frame = tk.Frame(self, bg=BG)
         self.cards_frame.pack(fill="x", padx=24, pady=(8, 8))
 
         section_label(self, "SEAT AVAILABILITY DETAIL")
         self.tbl = ResultTable(self)
-        self.tbl.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        self.tbl.config(height=140)
+        self.tbl.pack_propagate(False)
+        self.tbl.pack(fill="x", padx=24, pady=(0, 4))
+
+        # ── Booking section ───────────────────────────────────────────────────
+        section_label(self, "BOOK A SEAT")
+
+        book_row1 = tk.Frame(self, bg=BG)
+        book_row1.pack(fill="x", padx=24, pady=(0, 8))
+
+        leg_frame = tk.Frame(book_row1, bg=BG)
+        leg_frame.pack(side="left", padx=(0, 16))
+        tk.Label(leg_frame, text="LEG", bg=BG, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
+        self.leg_var = tk.StringVar()
+        self.leg_combo = ttk.Combobox(leg_frame, textvariable=self.leg_var,
+                                      state="readonly", width=28, font=FONT_MONO)
+        self.leg_combo.pack(ipady=4)
+        self.leg_combo.bind("<<ComboboxSelected>>", self._on_leg_change)
+
+        seat_frame = tk.Frame(book_row1, bg=BG)
+        seat_frame.pack(side="left", padx=(0, 16))
+        tk.Label(seat_frame, text="AVAILABLE SEAT", bg=BG, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
+        self.seat_var = tk.StringVar()
+        self.seat_combo = ttk.Combobox(seat_frame, textvariable=self.seat_var,
+                                       state="readonly", width=10, font=FONT_MONO)
+        self.seat_combo.pack(ipady=4)
+
+        book_row2 = tk.Frame(self, bg=BG)
+        book_row2.pack(fill="x", padx=24, pady=(0, 4))
+
+        name_frame, self.name_entry = input_field(book_row2, "PASSENGER NAME", width=24)
+        name_frame.pack(side="left", padx=(0, 12))
+
+        phone_frame, self.phone_entry = input_field(book_row2, "PHONE", width=16)
+        phone_frame.pack(side="left", padx=(0, 12))
+
+        book_btn = styled_button(book_row2, "Book Seat", self._book, color=GREEN, width=14)
+        book_btn.pack(side="left", padx=(0, 12), pady=(20, 0))
+
+        self.book_lbl = tk.Label(self, text="", bg=BG, fg=GREEN, font=FONT_SMALL)
+        self.book_lbl.pack(anchor="w", padx=26, pady=(0, 12))
 
     def _stat_card(self, parent, label, value, color):
         f = tk.Frame(parent, bg=SURFACE, padx=20, pady=14)
@@ -483,7 +525,7 @@ class SeatTab(BaseTab):
                  font=("Courier New", 26, "bold")).pack(anchor="w")
 
     def _check(self):
-        fn   = self.fn_entry.get().strip()
+        fn       = self.fn_entry.get().strip()
         date_val = self.date_entry.get().strip()
         if not fn or not date_val:
             messagebox.showwarning("Input needed", "Please enter a flight number and date.")
@@ -505,23 +547,121 @@ class SeatTab(BaseTab):
                 self._error_popup(err)
                 return
 
-            # Clear old cards
             for w in self.cards_frame.winfo_children():
                 w.destroy()
 
             if result:
-                # Aggregate across legs
                 total_max    = sum(r.get("Max_seats") or 0 for r in result)
                 total_booked = sum(r.get("booked_seats") or 0 for r in result)
                 total_remain = sum(r.get("computed_remaining_seats") or 0 for r in result)
                 remain_color = GREEN if total_remain > total_max * 0.2 else ACCENT2
-
                 self._stat_card(self.cards_frame, "TOTAL SEATS", total_max, ACCENT)
                 self._stat_card(self.cards_frame, "BOOKED",      total_booked, YELLOW)
                 self._stat_card(self.cards_frame, "REMAINING",   total_remain, remain_color)
 
             self.tbl.load(result or [])
             self.status.ok(f"{len(result or [])} leg instance(s) found")
+
+            self._leg_rows = result or []
+            self._populate_leg_combo()
+            self.book_lbl.config(text="")
+
+        self._run_async(query, done)
+
+    def _populate_leg_combo(self):
+        options = [
+            f"Leg {r['Leg_no']}  {r['dep_code']} → {r['arr_code']}"
+            for r in self._leg_rows
+        ]
+        self.leg_combo["values"] = options
+        if options:
+            self.leg_combo.current(0)
+            self._load_seats_for_index(0)
+        else:
+            self.leg_combo.set("")
+            self.seat_combo["values"] = []
+            self.seat_combo.set("")
+
+    def _on_leg_change(self, _event=None):
+        self._load_seats_for_index(self.leg_combo.current())
+
+    def _load_seats_for_index(self, idx):
+        if idx < 0 or idx >= len(self._leg_rows):
+            return
+        r = self._leg_rows[idx]
+
+        def query():
+            from queries import available_seats
+            return available_seats(
+                str(r["Date"]), r["flight_number"], r["Leg_no"], r["Airplane_id"]
+            )
+
+        def done(result, err):
+            if err:
+                self.seat_combo["values"] = []
+                self.seat_combo.set("(error)")
+                return
+            seats = [row["Seat_no"] for row in (result or [])]
+            self.seat_combo["values"] = seats
+            if seats:
+                self.seat_combo.current(0)
+            else:
+                self.seat_combo.set("(full)")
+
+        self._run_async(query, done)
+
+    def _book(self):
+        idx     = self.leg_combo.current()
+        seat_no = self.seat_var.get().strip()
+        name    = self.name_entry.get().strip()
+        phone   = self.phone_entry.get().strip()
+
+        if idx < 0 or not self._leg_rows:
+            messagebox.showwarning("No flight", "Run a seat availability check first.")
+            return
+        if not seat_no or seat_no in ("(full)", "(error)"):
+            messagebox.showwarning("No seat selected", "Please select an available seat.")
+            return
+        if not name:
+            messagebox.showwarning("Input needed", "Please enter a passenger name.")
+            return
+        if not phone:
+            messagebox.showwarning("Input needed", "Please enter a phone number.")
+            return
+
+        r             = self._leg_rows[idx]
+        date_str      = str(r["Date"])
+        flight_number = r["flight_number"]
+        leg_no        = r["Leg_no"]
+        airplane_id   = r["Airplane_id"]
+
+        self.status.busy(f"Booking seat {seat_no} for {name}…")
+        self.book_lbl.config(text="")
+
+        def query():
+            from queries import book_seat
+            book_seat(date_str, flight_number, leg_no, airplane_id, seat_no, name, phone)
+
+        def done(result, err):
+            if err:
+                self.status.err("Booking failed")
+                if "1062" in str(err) or "Duplicate" in str(err):
+                    self.book_lbl.config(
+                        fg=ACCENT2,
+                        text=f"Seat {seat_no} was just taken — please choose another."
+                    )
+                    self._load_seats_for_index(idx)
+                else:
+                    self._error_popup(err)
+                return
+            self.book_lbl.config(
+                fg=GREEN,
+                text=f"✔  Seat {seat_no} booked for {name} on flight {flight_number}, leg {leg_no}."
+            )
+            self.status.ok(f"Seat {seat_no} booked for {name}")
+            self.name_entry.delete(0, "end")
+            self.phone_entry.delete(0, "end")
+            self._check()
 
         self._run_async(query, done)
 
