@@ -47,11 +47,11 @@ A green dot labeled **MySQL** in the top-right corner of the window confirms a s
 
 ---
 
-# Design Patterns
+# Project structure
 
 # Architecture
 
-The application follows a three-layer architecture that separates database access, query logic, and presentation into distinct modules.
+The project follows a three-layer architecture that separates the GUI, SQL query functions, and database connection handling into different files.
 
 ```
 ┌─────────────────────────────────┐
@@ -70,23 +70,23 @@ The application follows a three-layer architecture that separates database acces
 └─────────────────────────────────┘
 ```
 
-Each layer has a single responsibility. `gui.py` handles all user interaction and never writes SQL. `queries.py` contains every SQL statement and returns plain Python dictionaries. `db.py` manages the connection lifecycle and reads credentials from `config.ini`. This separation means any layer can be changed independently — for example, swapping the GUI framework or switching database engines would only touch one file each.
+Each layer has a single responsibility. `gui.py` handles all user interaction and never writes SQL. `queries.py` contains every SQL statement and returns plain Python dictionaries. `db.py` manages the connection lifecycle and reads credentials from `config.ini`. This means any layer can be changed independently. For example, swapping the GUI framework or switching database engines would only touch one file each.
 
-All database queries run in background threads via a shared `_run_async` helper in `BaseTab`, so the interface never freezes while waiting for a response. Results are posted back to the main thread using Tkinter's `after()` callback, which is the correct pattern for thread-safe UI updates.
+Database queries run in background threads via a shared `_run_async` helper in `BaseTab`, so the GUI stays responsive while loading results. Results are posted back to the main thread using Tkinter's `after()` callback, which is the correct pattern for thread-safe UI updates.
 
 # Language Choice — Python
 
-Python was chosen for its fast development cycle and strong ecosystem for database work. The `mysql-connector-python` library provides a stable, well-documented MySQL driver with parameterized queries that prevent SQL injection out of the box. Python also runs cross-platform without a compilation step, which simplifies setup for grading and demonstration.
+Python was chosen because it works well with MYSQL and made it easier to build the backend logic and GUI using Tkinter. The `mysql-connector-python` library provides a simple way to connect python with the MySQL database and executes queries safely using parameterized statements. Also, python can run on multiple operating systems without a compilation step, which simplifies setup for grading and demonstration.
 
 # GUI Framework — Tkinter
 
-Tkinter is Python's built-in GUI library, meaning no additional installation is required beyond the database driver. While more modern frameworks exist, Tkinter's `ttk.Notebook` widget provides exactly the tab-strip layout this application needs, and its threading model integrates cleanly with Python's `threading` module. For a data-entry and reporting application like this, Tkinter's widget set (entry fields, dropdowns, scrollable tables) covers every requirement without the overhead of a web stack.
+Tkinter is Python's built-in GUI library, meaning no additional installation is required beyond the database driver.  The `ttk.Notebook` widget made it straightforward to organize the application into tabs for each feature. Tkinter also worked well for building forms, tables, dropdown menus, and other interface elements needed for the database system. Since this project mainly focuses on data entry and query results, Tkinter was a practical choice that kept the application simple and easy to run.
 
 # Menu and Layout Design
 
-Each of the five features gets its own tab. This design was chosen because each feature is a fully self-contained workflow — a user searching for a trip has no reason to interact with the aircraft utilization report, and mixing them on a single screen would create clutter. Tabs let users stay focused on one task at a time and make it easy to switch context during a live demonstration.
+The application is organized into separate tabs, with each tab representing one major feature of the system such as flight lookup, trip search, aircraft utilization, seat booking, and passenger itinerary lookup. This design was chosen because each feature is a fully self-contained workflow. A user searching for a trip wouldn't need to interact with the aircraft utilization report, and mixing them would create clutter. Separating the features into tabs keeps the interface more organized and prevents too much information from appearing on a single screen. It also makes the application easier to navigate during testing and demonstrations.
 
-Within each tab, **labeled text entry fields** are used for free-form inputs like flight numbers, dates, and passenger names, because these values cannot be enumerated in advance. **Dropdown menus (Comboboxes)** are used where the valid choices are known at runtime — specifically the leg selector and seat selector in the booking form, which are populated dynamically from the database after a seat check. This prevents the user from typing an invalid seat number or selecting a leg that does not exist. **Buttons** trigger actions and are labeled with verbs (*Search Flight*, *Check Seats*, *Book Seat*) to make the expected behavior unambiguous.
+Within each tab, **labeled text entry fields** are used for free-form inputs like flight numbers, dates, and passenger names, because these values cannot be enumerated in advance. **Dropdown menus (Comboboxes)** are used where the valid choices are known at runtime, especially for selecting flight legs and available seats in the booking form. The options are loaded dynamically from the database after a seat check. This prevents the user from selecting an invalid seat number or a leg that does not exist. **Buttons** are used to trigger actions and are labeled with verbs (*Search Flight*, *Check Seats*, *Book Seat*) to make the expected behavior clear.
 
 A shared status bar at the bottom of the window provides feedback on every action without using disruptive popup dialogs for routine results.
 
